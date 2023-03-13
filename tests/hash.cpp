@@ -26,10 +26,10 @@ void show(sycl::group<1> g, const sycl::stream &out, int id, T &x) {
 
     loc = write_num(id, 12, buf, loc);
     buf[loc++] = ':';
-    for(auto item = x.begin(g); item != x.end(g); ++item) {
+    for(auto item : x) {
         if(loc+1+12+2 >= 128) break;
         buf[loc++] = ' ';
-        loc = write_num(*item, 12, buf, loc);
+        loc = write_num(item, 12, buf, loc);
     }
     buf[loc++] = '\n';
     buf[loc++] = '\0';
@@ -76,28 +76,28 @@ int test1(sycl::queue &q) {
             sycl::group<1> g = it.get_group();
 
             {
-                auto bucket = dh[gid];
-                ++bucket.begin(g);
-                bucket.insert(g, 1+10*gid);
-                bucket.insert(g, 2+10*gid);
-                bucket.insert(g, 3+10*gid);
+                auto bucket = dh[g][gid];
+                ++bucket.begin();
+                bucket.insert(1+10*gid);
+                bucket.insert(2+10*gid);
+                bucket.insert(3+10*gid);
                 show(g, out, gid, bucket);
             }
 
             // get the next index over
             if(1) {
-                auto bucket = dh[ (gid+1)%4 ];
-                //(++bucket.begin(g)).erase();
-                bucket.begin(g).erase();
+                auto bucket = dh[g][ (gid+1)%4 ];
+                //(++bucket.begin()).erase();
+                bucket.begin().erase();
                 show(g, out, gid, bucket);
             }
 
             /*
             if(1) {
-                auto bucket = dh[ gid ];
-                bucket.insert(g, 4+10*gid);
-                bucket.insert(g, 5+10*gid);
-                show(g, out, gid, bucket);
+                auto bucket = dh[g][ gid ];
+                bucket.insert(4+10*gid);
+                bucket.insert(5+10*gid);
+                show(out, gid, bucket);
             }*/
         });
     });
@@ -130,28 +130,28 @@ int test2(sycl::queue &q) {
             sycl::group<1> g = it.get_group();
 
             {
-                auto bucket = dh[gid];
-                ++bucket.begin(g);
-                bucket.insert_unique(g, 1+10*gid);
-                bucket.insert_unique(g, 2+10*gid);
-                bucket.insert_unique(g, 3+10*gid);
+                auto bucket = dh[g][gid];
+                ++bucket.begin();
+                bucket.insert_unique(1+10*gid);
+                bucket.insert_unique(2+10*gid);
+                bucket.insert_unique(3+10*gid);
                 show(g, out, gid, bucket);
             }
 
             // get the next index over
             if(1) {
-                auto bucket = dh[ (gid+1)%4 ];
-                //(++bucket.begin(g)).erase();
-                bucket.begin(g).erase();
+                auto bucket = dh[g][ (gid+1)%4 ];
+                //(++bucket.begin()).erase();
+                bucket.begin().erase();
                 show(g, out, gid, bucket);
             }
 
             /*
             if(1) {
-                auto bucket = dh[ gid ];
-                bucket.insert(g, 4+10*gid);
-                bucket.insert(g, 5+10*gid);
-                show(g, out, gid, bucket);
+                auto bucket = dh[g][ gid ];
+                bucket.insert(4+10*gid);
+                bucket.insert(5+10*gid);
+                show(out, gid, bucket);
             }*/
         });
     });

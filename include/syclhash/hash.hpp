@@ -71,16 +71,21 @@ enum class Step {
     Complete,
 };
 
+struct SingletGroup;
+
+template<typename Group, typename DeviceHashT>
+class PreBucket;
+
 /** A Bucket points to the set of values in the hash
  * table with the given key.
  *
  * The real work is done with iterators, created
- * through the bucket's begin(g) and end(g) calls.
+ * through the bucket's begin() and end() calls.
  *
  * Example:
  *
- *     auto bucket = dh[key];
- *     for(const T &val = bucket.begin(g); val != bucket.end(g); ++val) {
+ *     auto bucket = dh[g][key];
+ *     for(const auto val : bucket) {
  *         printf("%lu %lu\n", key, val);
  *     } printf("\n");
  *
@@ -90,42 +95,40 @@ enum class Step {
  * @tparam accessTarget where memory accessors will live
  *
  */
-template<class T,
-         int search_width,
-         sycl::access::mode Mode,
-         sycl::access::target accessTarget
-                 = sycl::access::target::global_buffer>
+template<typename Group_, typename DeviceHashT_>
 class Bucket {
-    const DeviceHash<T,search_width,Mode,accessTarget> &dh;
+    const DeviceHashT_ &dh;
+    using T = typename DeviceHashT_::value_type;
+    friend class PreBucket<Group_,DeviceHashT_>;
 
   public:
+    using Group = Group_;
+    using DeviceHashT = DeviceHashT_;
+    using value_type = typename DeviceHashT_::value_type;
+    const Group group;
     const Ptr key;
-    using value_type = T;
-    using DeviceHashT = DeviceHash<T,search_width,Mode,accessTarget>;
-    static constexpr int width = search_width;
-    static constexpr sycl::access::target Target = accessTarget;
+    //static constexpr sycl::access::target Target = accessTarget;
 
     /** Construct the Bucket for `dh`
      * that points at `key`.
      */
-    Bucket(const DeviceHashT &dh, Ptr key) : dh(dh), key(key) {}
+    Bucket(Group grp, const DeviceHashT &dh, Ptr key)
+        : dh(dh), group(grp), key(key) {}
 
     /** A cursor pointing at a specific cell in the Bucket.
      */
-    template <typename Group>
     class iterator {
-        friend class Bucket<T,width,Mode,accessTarget>;
+        friend class Bucket<Group,DeviceHashT>;
 
         const DeviceHashT *dh;
-        static constexpr int width = search_width;
+        const Group grp;
         Ptr key;
         Ptr index;
-        Group grp;
     
         /** Only friends can construct iterators.
          */
         iterator(Group g, const DeviceHashT *dh, Ptr key, Ptr index)
-                : dh(dh), key(key), index(index), grp(g) {
+                : dh(dh), grp(g), key(key), index(index) {
             seek(false);
         }
 
@@ -155,23 +158,25 @@ class Bucket {
         }
 
       public:
-        using DeviceHashT = DeviceHash<T,search_width,Mode,accessTarget>;
-
         using iterator_category = std::forward_iterator_tag;
         using difference_type = size_t;
 
-        using value_type = std::conditional_t<Mode == sycl::access::mode::read,
+        using value_type = std::conditional_t<
+                                DeviceHashT::Mode == sycl::access::mode::read,
                        const T, T >;
-        using reference = std::conditional_t<Mode == sycl::access::mode::read,
+        using reference = std::conditional_t<
+                                DeviceHashT::Mode == sycl::access::mode::read,
                        const T&, T& >;
-        using pointer = std::conditional_t<Mode == sycl::access::mode::read,
+        using pointer = std::conditional_t<
+                                DeviceHashT::Mode == sycl::access::mode::read,
                        const T*, T* >;
 
         iterator(const iterator &x)
-            : dh(x.dh), key(x.key), index(x.index), grp(x.grp) {}
+            : dh(x.dh), grp(x.grp), key(x.key), index(x.index) {}
         iterator &operator=(const iterator &x) {
             dh = x.dh;
             key = x.key;
+            //grp = x.grp;
             index = x.index;
             return *this;
         }
@@ -227,9 +232,8 @@ class Bucket {
      *
      * @arg grp collective group that will access the iterator
      */
-    template <typename Group>
-    iterator<Group> begin(Group grp) const {
-        return iterator<Group>(grp, &dh, key, dh.mod(key));
+    iterator begin() const {
+        return iterator(group, &dh, key, dh.mod(key));
     }
 
     /** Create an iterator pointing to the end
@@ -237,9 +241,8 @@ class Bucket {
      *
      * @arg grp collective group that will access the iterator
      */
-    template <typename Group>
-    iterator<Group> end(Group grp) const {
-        return iterator<Group>(grp, &dh, key, null_ptr);
+    iterator end() const {
+        return iterator(group, &dh, key, null_ptr);
     }
 
     /** Put a new value into this bucket.
@@ -263,16 +266,16 @@ class Bucket {
      *      threads accessing the cell may still be using it
      *      (if they are unaware that someone had deleted it).
      */
-    template <typename Group, typename ...Args>
-    iterator<Group> insert(Group grp, Args ... args) const {
-        Ptr index = dh.insert_cell(grp, key, false, args...);
-        return iterator<Group>(grp, &dh, key, index);
+    template <typename ...Args>
+    iterator insert(Args ... args) const {
+        Ptr index = dh.insert_cell(group, key, false, args...);
+        return iterator(group, &dh, key, index);
     }
 
-    template <typename Group, typename ...Args>
-    iterator<Group> insert_unique(Group grp, Args ... args) const {
-        Ptr index = dh.insert_cell(grp, key, true, args...);
-        return iterator<Group>(grp, &dh, key, index);
+    template <typename ...Args>
+    iterator insert_unique(Args ... args) const {
+        Ptr index = dh.insert_cell(group, key, true, args...);
+        return iterator(group, &dh, key, index);
     }
 
     /** Return true if index was deleted, false if it was not present.
@@ -304,11 +307,50 @@ class Bucket {
      *     Technically, erasing without any concurrent insertions
      *     would leave the value dedicated, but no longer referenced.
      */
-    template <typename Group>
-    bool erase(iterator<Group> position) const {
+    bool erase(iterator position) const {
         return position.erase();
     }
 };
+
+/** A Pre-Bucket just stores the group which will be used
+ * to access a particular bucket.
+ *
+ * @tparam Group type of the group (SingletGroup,
+ *                                  sycl::group, or sycl::sub_group)
+ *
+ */
+template<typename Group_, typename DeviceHashT_>
+class PreBucket {
+    using T = typename DeviceHashT_::value_type;
+  public:
+    using Group = Group_;
+    using DeviceHashT = DeviceHashT_;
+    using BucketT = Bucket<Group,DeviceHashT>;
+    // TODO ensure only allowed group/device combinations:
+    //   static_assert(std::is_same_t<Group,SingletGroup> ^ (DeviceHashT::accessTarget==HostDevice));
+
+    const Group group;
+    const DeviceHashT &dh;
+    PreBucket(const DeviceHashT &dhash, const Group grp)
+        : dh(dhash), group(grp) {}
+
+    BucketT operator[](Ptr key) const {
+        return BucketT(group, dh, key);
+    }
+
+    /** Convenience function to insert `value`
+     * to the :class:`Bucket` at the given `key`
+     *
+     * @arg uniq true if keys are uniq (ignores value
+     *                if key is found)
+     */
+    typename BucketT::iterator
+    insert(Ptr key, const T&value, bool uniq) const {
+        BucketT bucket(group, dh, key);
+        return bucket.insert(value, uniq);
+    }
+};
+
 
 /** Device side data structure for hash table.
  *
@@ -321,17 +363,17 @@ class Bucket {
  */
 template <typename T,
           int search_width,
-          sycl::access::mode Mode,
+          sycl::access::mode accessMode,
           sycl::access::target accessTarget
               = sycl::access::target::global_buffer>
 class DeviceHash {
     template <typename,int, sycl::access::mode, sycl::access::target>
     friend class DeviceHash;
 
-    sycl::accessor<Ptr, 1, Mode, accessTarget> keys;  // key for each cell
-    sycl::accessor<T, 1, Mode, accessTarget>   cell;
+    sycl::accessor<Ptr, 1, accessMode, accessTarget> keys;  // key for each cell
+    sycl::accessor<T, 1, accessMode, accessTarget>   cell;
 
-    //const DeviceAlloc<Mode,accessTarget> alloc;
+    //const DeviceAlloc<accessMode,accessTarget> alloc;
 
     /*  Attempt to reserve the key at index (by overwriting `was`
      *  with reserved using relaxed semantics)
@@ -354,7 +396,10 @@ class DeviceHash {
     }
 
   public:
-    using BucketT = Bucket<T,search_width,Mode,accessTarget>;
+    using DeviceHashT = DeviceHash<T,search_width,accessMode,accessTarget>;
+    using value_type = T;
+
+    static constexpr sycl::access::mode Mode = accessMode;
     static constexpr sycl::access::target Target = accessTarget;
     static constexpr int width = search_width;
     const int size_expt;
@@ -505,21 +550,9 @@ class DeviceHash {
     }
 
     /// bucket = (key % N) is the first index.
-    BucketT operator[](Ptr key) const {
-        return BucketT(*this, key);
-    }
-
-    /** Convenience function to insert `value`
-     * to the :class:`Bucket` at the given `key`
-     *
-     * @arg uniq true if keys are uniq (ignores value
-     *                if key is found)
-     */
     template <typename Group>
-    typename BucketT::template iterator<Group>
-    insert(Group g, Ptr key, const T&value, bool uniq) const {
-        BucketT bucket = (*this)[key];
-        return bucket.insert(g, value, uniq);
+    PreBucket<Group,DeviceHashT> operator[](Group g) const {
+        return PreBucket<Group,DeviceHashT>(*this, g);
     }
 
     /** Low-level function inserting a key,value pair

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# TODO: try adding -Wno-deprecated-declarations
+
 rm -fr build
 mkdir build
 

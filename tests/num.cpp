@@ -31,7 +31,7 @@ int test1(sycl::queue &q, const int width) {
 
             for(int i=0; i<inserts_per_group; i++) {
                 rng = rng_incr(rng);
-                dh[rng].insert(g, (int)rng);
+                dh[g][rng].insert((int)rng);
             }
         });
     });
@@ -58,11 +58,11 @@ int test1(sycl::queue &q, const int width) {
 int main() {
     int err = 0;
     sycl::queue q;
-    //err += test1(q, 1);
+    err += test1(q, 1); // hangs on GPU
     err += test1(q, 2);
     err += test1(q, 4);
     err += test1(q, 8);
     err += test1(q, 16);
-    err += test1(q, 32);
+    err += test1(q, 32); // hangs on CPU
     return err;
 }
