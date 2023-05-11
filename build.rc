@@ -1,0 +1,21 @@
+#!/bin/rc
+
+PRE=$HOME/src/hipSYCL/inst
+
+SYCL  = $DPCPP_HOME
+CMAKE = cmake
+
+rm -fr build
+mkdir build
+cd build
+CXXFLAGS='-fsycl -fsycl-targets=nvptx64-nvidia-cuda -Xsycl-target-backend --cuda-gpu-arch=sm_75'
+
+$CMAKE -DCMAKE_PREFIX_PATH=$PRE \
+       -DCMAKE_CXX_COMPILER=clang++ \
+       -DHIPSYCL_TARGETS=cuda:sm_75 \
+       -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+       -DBUILD_DOCS=OFF \
+       -DCMAKE_INSTALL_PREFIX=$PRE \
+       ..
+
+make -j4

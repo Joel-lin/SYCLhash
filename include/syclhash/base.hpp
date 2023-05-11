@@ -41,7 +41,7 @@ inline int ctz(const uint64_t x) {
     if(g.get_local_linear_id() == 0) { \
         ans = call; \
     } \
-    ans = sycl::select_from_group(g, ans, 0); \
+    ans = sycl::group_broadcast(g, ans, 0); \
 }
 
 /* This approach doesn't work.  It confuses the compiler with:
@@ -53,7 +53,7 @@ Ret apply_leader(Group g, F fn, Args... args) {
     if(g.get_local_linear_id() == 0) {
         ans = fn(args...);
     }
-    return sycl::select_from_group(g, ans, 0);
+    return sycl::group_broadcast(g, ans, 0);
 }*/
 
 /// rotate x left by r bits

@@ -102,7 +102,7 @@ class DeviceAlloc {
         if(g.get_local_linear_id() == 0) {
             ok = try_alloc(index);
         }
-        return sycl::select_from_group(g, ok, 0);
+        return sycl::group_broadcast(g, ok, 0);
     }
 
     /** Try allocating at the given index.
@@ -119,7 +119,8 @@ class DeviceAlloc {
 
         const Ptr mask = 1 << j;
         auto v = sycl::atomic_ref<
-                        uint32_t, sycl::memory_order::acquire,
+                        //uint32_t, sycl::memory_order::acquire,
+                        uint32_t, sycl::memory_order::acq_rel,
                         sycl::memory_scope::device,
                         sycl::access::address_space::global_space>(
                                 free_list[i]);
@@ -134,7 +135,8 @@ class DeviceAlloc {
 
         Ptr mask = 1 << j;
         auto v = sycl::atomic_ref<
-                        uint32_t, sycl::memory_order::release,
+                        //uint32_t, sycl::memory_order::release,
+                        uint32_t, sycl::memory_order::acq_rel,
                         sycl::memory_scope::device,
                         sycl::access::address_space::global_space>(
                                 free_list[i]);
@@ -192,7 +194,7 @@ class DeviceAlloc {
             // return the speculative allocation
             this->free(idx);
         }
-        return sycl::select_from_group(g, idx, winner);
+        return sycl::group_broadcast(g, idx, winner);
     }
 
     /** Wrap the index into the range of valid keys, [0, 2**size_expt).

@@ -266,13 +266,19 @@ class Bucket {
      *      threads accessing the cell may still be using it
      *      (if they are unaware that someone had deleted it).
      */
-    template <typename ...Args>
+    template <bool use=true,
+			    std::enable_if_t< use &&
+                    DeviceHashT::Mode != sycl::access::mode::read, bool> = true
+			  , typename ...Args>
     iterator insert(Args ... args) const {
         Ptr index = dh.insert_cell(group, key, false, args...);
         return iterator(group, &dh, key, index);
     }
 
-    template <typename ...Args>
+    template <typename Group, bool use=true,
+			    std::enable_if_t< use &&
+                    DeviceHashT::Mode != sycl::access::mode::read, bool> = true
+			 , typename ...Args>
     iterator insert_unique(Args ... args) const {
         Ptr index = dh.insert_cell(group, key, true, args...);
         return iterator(group, &dh, key, index);
@@ -307,6 +313,9 @@ class Bucket {
      *     Technically, erasing without any concurrent insertions
      *     would leave the value dedicated, but no longer referenced.
      */
+    template <bool use=true,
+			    std::enable_if_t< use &&
+              DeviceHashT::Mode != sycl::access::mode::read, bool> = true>
     bool erase(iterator position) const {
         return position.erase();
     }
@@ -467,7 +476,7 @@ class DeviceHash {
             for(size_t i = g.get_group_linear_id()
                ;       i < count
                ;       i += g.get_group_linear_range()) {
-                //Ptr key = sycl::select_from_group(g, keys[i], 0);
+                //Ptr key = sycl::group_broadcast(g, keys[i], 0);
                 Ptr key = keys[i];
                 if((key>>31) & 1) continue;
                 fn(it, key, cell[i], args ...);
@@ -490,18 +499,18 @@ class DeviceHash {
                       sycl::nd_range<Dim> rng,
                       sycl::buffer<R,1> &ret,
                       Fn fn, Args ... args) const {
-        sycl::accessor<R, 1>  d_ret(ret, cgh, sycl::read_write);
+        //sycl::accessor<R, 1>  d_ret(ret, cgh, sycl::read_write);
         const size_t count = 1 << size_expt;
 
         cgh.parallel_for(rng,
-                sycl::reduction(d_ret, sycl::plus<R>()),
+                sycl::reduction(ret, cgh, sycl::plus<R>()),
                 [=, keys=this->keys, cell=this->cell]
                 (sycl::nd_item<Dim> it, auto &ans) {
             sycl::group<Dim> g = it.get_group();
             for(size_t i = g.get_group_linear_id()
                ;       i < count
                ;       i += g.get_group_linear_range()) {
-                //Ptr key = sycl::select_from_group(g, keys[i], 0);
+                //Ptr key = sycl::group_broadcast(g, keys[i], 0);
                 Ptr key = keys[i];
                 if((key>>31) & 1) continue;
                 R tmp = fn(it, key, cell[i]); //, args ...);
@@ -562,7 +571,12 @@ class DeviceHash {
      *  @returns Ptr index where insertion took place / key was found
      *           or null_ptr if table is full
      */
-    template <typename Group, typename ...Args>
+
+    //template <typename Group, typename ...Args>
+    template <typename Group, bool use=true,
+			    std::enable_if_t< use &&
+                    Mode != sycl::access::mode::read, bool> = true
+			   , typename ...Args>
     Ptr insert_cell(Group g, Ptr key, bool uniq, Args ... args) const {
         Ptr index = mod(key);
         if(! run_op(g, key, index, uniq, [=](Ptr i1, Ptr k1) {
@@ -603,10 +617,10 @@ class DeviceHash {
      */
     template <typename Group, typename Fn>
     bool run_op(Group g,
-               Ptr key,
-               Ptr &index,
-               bool uniq,
-               Fn op) const {
+                Ptr key,
+                Ptr &index,
+                bool uniq,
+                Fn op) const {
         Ptr i0 = (index >> search_width) << search_width; // align reads
 
         uint32_t cap = (1 << (size_expt-search_width)) + (i0 != index);
@@ -641,7 +655,7 @@ class DeviceHash {
 
                 for(int winner=0; (mask>>winner) > 0; winner++) {
                     if(((mask>>winner)&1) == 0) continue;
-                    Ptr found = sycl::select_from_group(g, ahead, winner);
+                    Ptr found = sycl::group_broadcast(g, ahead, winner);
 
                     int idx = i0+i-tid+winner;
                     Step step;
@@ -676,6 +690,8 @@ class DeviceHash {
      * @arg index hash-table index where key is set
      * @return true if set is successful, false otherwise
      */
+    template <bool use=true, std::enable_if_t< use &&
+			  Mode != sycl::access::mode::read, bool> = true>
     bool set_key(Ptr index, Ptr &was, Ptr key, const T &value) const {
         ADDRESS_CHECK(index, size_expt);
         if(!reserve_key(index, was, key)) return false;
@@ -693,6 +709,8 @@ class DeviceHash {
         return true;
     }
 
+    template <bool use=true, std::enable_if_t< use &&
+			  Mode != sycl::access::mode::read, bool> = true>
     bool set_key(Ptr index, Ptr &was, Ptr key) const {
         ADDRESS_CHECK(index, size_expt);
         if(!reserve_key(index, was, key)) return false;
@@ -719,7 +737,9 @@ class DeviceHash {
         printf("Erasing %u at %u\n", key, index);
 #       endif
         auto v = sycl::atomic_ref<
-                            Ptr, sycl::memory_order::release,
+                            Ptr,
+							//sycl::memory_order::release,
+							sycl::memory_order::acq_rel,
                             sycl::memory_scope::device,
                             sycl::access::address_space::global_space>(
                                     keys[index]);
@@ -727,12 +747,6 @@ class DeviceHash {
         return v.compare_exchange_strong(val, erased);
     }
 };
-
-template<typename T, int width, class Descriptor>
-DeviceHash(Hash<T,width>&,
-           sycl::handler&,
-           Descriptor)
-    -> DeviceHash<T, width, Descriptor::mode, Descriptor::target>;
 
 template <typename T, int search_width, sycl::access::mode Mode>
 class HostHash : public DeviceHash<T, search_width, Mode,
@@ -745,7 +759,96 @@ class HostHash : public DeviceHash<T, search_width, Mode,
         {}
 };
 
+/* SYCL doesn't re-export the template params (access or mode) from an accessor.
+template <typename Buffer, typename Descriptor...>
+using AccessMode = typename std::invoke_result_t<sycl::accessor, Buffer, sycl::handler&, Descriptor...>::AccessMode; // C++17
+*/
+
+/* SYCL doesn't guarantee the descriptor type can be used either
 template<typename T, int width, class Descriptor>
 HostHash(Hash<T,width>&, Descriptor)
-    -> HostHash<T, width, Descriptor::mode>;
+    -> HostHash<T, width, ::mode>;
+*/
+
+/* So, we have to re-implement SYCL's logic to determine
+ * mode tags.  However, these don't have unique types,
+ * so the mode tag can't be determined at compile time.
+ * Nevertheless, the SYCL implementation does determine it
+ * at compile time.  Hence, they must have unique types, despite
+ * the incomplete specification:
+inline constexpr __unspecified__ read_only;
+inline constexpr __unspecified__ read_write;
+inline constexpr __unspecified__ write_only;
+inline constexpr __unspecified__ read_only_host_task;
+inline constexpr __unspecified__ read_write_host_task;
+inline constexpr __unspecified__ write_only_host_task;
+
+
+|  Tag value  | Access mode        |   Accessor target  |
+| ------      | ----------------   | ------------------ |
+| read_write  | access_mode::read_write | target::device |
+| read_only   | access_mode::read       | target::device |
+| write_only  | access_mode::write      | target::device |
+| read_write_host_task | access_mode::read_write | target::host_task |
+| read_only_host_task  | access_mode::read | target::host_task |
+| write_only_host_task | access_mode::write | target::host_task |
+*/
+/*
+constexpr sycl::access_mode AccessMode(auto x) {
+	return x == sycl::read_only ?
+		sycl::access_mode::read
+		: (sycl::access_mode::read_write);
+};*/
+
+/*
+template <typename Descriptor>
+using AccessMode_t = typename
+    std::conditional_t<            std::is_same_v<Descriptor, decltype(sycl::read_only)>,
+		decltype(sycl::access_mode::read),
+		std::conditional_t<        std::is_same_v<Descriptor, decltype(sycl::read_write)>,
+		    decltype(sycl::access_mode::read_write),
+			std::conditional_t<    std::is_same_v<Descriptor, decltype(sycl::write_only)>,
+			    decltype(sycl::access_mode::write),
+				void
+			>
+		>
+	>;
+*/
+
+/*
+template <typename Descriptor>
+constexpr sycl::access_mode AccessMode_t() {
+	return sycl::access_mode::read;
+}
+template<>
+constexpr sycl::access_mode AccessMode_t<decltype(sycl::read_only)>() {
+	return sycl::access_mode::read;
+}
+template<>
+constexpr sycl::access_mode AccessMode_t<decltype(sycl::read_write)>() {
+	return sycl::access_mode::read_write;
+}
+template<>
+constexpr sycl::access_mode AccessMode_t<decltype(sycl::write_only)>() {
+	return sycl::access_mode::write;
+}*/
+
+// Cheat, and retrieve the argument from the underlying Descriptor.
+// "When you can snatch the enum argument from my templated type,
+//  it will be time for you to leave."
+template <sycl::access_mode mode, template<sycl::access_mode> class ctorType>
+constexpr sycl::access_mode AccessMode_t(ctorType<mode>) {
+	return mode;
+}
+
+template<typename T, int width, class Descriptor>
+DeviceHash(Hash<T,width>&,
+           sycl::handler&,
+           Descriptor d)
+    -> DeviceHash<T, width, AccessMode_t(d), sycl::target::device >;
+    //-> DeviceHash<T, width, Descriptor::mode, Descriptor::target>;
+
+template<typename T, int width, class Descriptor>
+HostHash(Hash<T,width>&, Descriptor d)
+    -> HostHash<T, width, AccessMode_t(d) >;
 }

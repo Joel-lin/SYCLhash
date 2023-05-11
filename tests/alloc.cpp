@@ -23,11 +23,12 @@ int main() {
 
             for(int i=0; i<10; i++) {
                 Ptr idx = da.alloc(it.get_group(), i);
-                if(it.get_local_id(0) == 0)
-                    printf("%lu,%lu ~> %lu\n", it.get_group(0), i, idx);
+                //if(it.get_local_id(0) == 0)
+                //    printf("%lu,%lu ~> %lu\n", it.get_group(0), i, idx);
             }
         });
     });
+	q.wait_and_throw();
 
     return 0;
 }

@@ -41,7 +41,7 @@ template <typename T>
 void show_fn(sycl::nd_item<1> it, Ptr key,
              const T &val) {//, const sycl::stream out) {
     sycl::group<1> g = it.get_group();
-    if(g.get_local_id(0) != 0) return;
+    if(g.get_local_linear_id() != 0) return;
     char buf[32];
     int loc = 0;
     loc = write_num(key, 12, buf, loc);
@@ -52,7 +52,7 @@ void show_fn(sycl::nd_item<1> it, Ptr key,
     buf[loc++] = '\n';
     buf[loc++] = '\0';
     //out << buf;
-    printf("%d : %d\n", key, val);
+    //printf("%d : %d\n", key, val);
 }
 
 int test1(sycl::queue &q) {
