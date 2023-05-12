@@ -37,7 +37,10 @@ int test1(sycl::queue &q, const int width) {
 
             for(int i=0; i<inserts_per_group; i++) {
                 rng = rng_incr(rng);
-                dh[it.get_group()][rng].insert((int)rng);
+                auto ans = dh[it.get_group()][rng].insert((int)rng);
+				//if(ans != dh[it.get_group()][rng].end()) {
+				//	printf("Insertion succeeds: %d/%d @ %d\n", b,c, i);
+				//}
             }
         });
     });

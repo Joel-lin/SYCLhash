@@ -160,7 +160,11 @@ int test2(sycl::queue &q) {
     q.submit([&](sycl::handler &cgh) {
         DeviceHash dh(hash, cgh, sycl::read_write);
         //sycl::stream out(1024, 256, cgh);
-        dh.parallel_for(cgh, sycl::nd_range<1>(1024, 32), show_fn<int>);//, out);
+        dh.parallel_for(cgh, sycl::nd_range<1>(1024, 32),
+					[](sycl::nd_item<1> it, Ptr key, const T &val) {
+					//, const sycl::stream out) {
+				return show_fn<int>(it, key, val);
+		});//, out);
     });
 
     return 0;
