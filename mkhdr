@@ -1,0 +1,38 @@
+SYSNAME=`{uname}
+INSTALL=`{ [ $SYSNAME = AIX ] && echo installbsd || echo install}
+OBJTYPE=`{uname -m | sed '
+  s/.*i[3-6]86.*/386/
+  s/.*i86pc.*/386/
+  s/.*amd64.*/x86_64/
+  s/.*x86_64.*/x86_64/
+  s/.*armv.*/arm/g
+  s/.*powerpc.*/power/g
+  s/.*PowerMacintosh.*/power/g
+  s/.*Power.Macintosh.*/power/g
+  s/.*macppc.*/power/g
+  s/.*mips.*/mips/g
+  s/.*ppc64.*/power/g
+  s/.*ppc.*/power/g
+  s/.*alpha.*/alpha/g
+  s/.*sun4u.*/sun4u/g
+  s/.*aarch64.*/arm64/
+  s/.*arm64.*/arm64/
+'}
+
+O=o
+OS=$O
+
+CC = clang
+CXX = clang++
+CXXFLAGS = -fsycl -fsycl-targets=nvptx64-nvidia-cuda -Xsycl-target-backend --cuda-gpu-arch=sm_75
+LD = clang++
+AS = no-9a
+AR = llvm-ar
+CFLAGS =
+LDFLAGS = $CXXFLAGS
+AFLAGS =
+CLEANFILES =
+NUKEFILES =
+YACC = bison -y
+LEX = flex -l
+YFLAGS = -d

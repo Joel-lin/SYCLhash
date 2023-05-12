@@ -1,0 +1,50 @@
+# Generic rules for a 'modern' structured
+# header only library (include/projname/*.hpp)
+# with out-of-source test build.
+#
+# Requires input variables:
+#    SRC    - root of source tree
+#    TESTS  - list of tests, with .x suffixes
+#    HFILES - list of header files, with .hpp suffixes
+#    GENHDR - list of generated header files, with .hpp.in suffixes
+#    DESTDIR - root of install tree (required by install target)
+#
+# all:V: $PROGS
+
+test:V:	$TESTS
+    echo "Testing"
+    for i in $TESTS; do
+       $i
+    done
+
+install:V:	header.install
+header.install:V: ${HFILES:$SRC/%=$DESTDIR/%} ${GENHDR:%=$DESTDIR/%}
+
+# How to install namespaced headers
+$DESTDIR/include/%.hpp: $SRC/include/%.hpp
+    install -d `dirname $target`
+    install $SRC/include/$stem.hpp $target
+
+$DESTDIR/include/%.hpp: include/%.hpp
+    install -d `dirname $target`
+    install include/$stem.hpp $target
+
+%.x:  %.$O
+    mkdir -p `dirname $target`
+    $LD -o $target $prereq $LDFLAGS
+
+%.$O:   $HFILES $GENHDR
+
+# TODO: substitute some variables
+%.hpp:  $SRC/%.hpp.in
+    mkdir -p `dirname $target`
+	grep -v '@[^@]+@' $SRC/$stem.hpp.in >$target
+
+%.$O:   $SRC/%.cpp
+    mkdir -p `dirname $target`
+    $CXX -c -o $target -I$SRC/include -Iinclude $CXXFLAGS $SRC/$stem.cpp
+
+clean:V: clean-common
+
+clean-common:
+    rm -f *.$OS $OS.out $CLEANFILES y.tab.^(c h)
