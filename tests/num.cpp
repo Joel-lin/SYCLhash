@@ -49,17 +49,22 @@ int test1(sycl::queue &q, const int width) {
     // Submit a second kernel showing all key:value pairs
     int N = 0;
     if(1) {
-        sycl::buffer<int,1> ret(&N,1);
+		HostHash H(hash, sycl::read_only);
+		for(auto [key, val] : H.items(Singlet())) {
+			++N;
+		}
+		/*
+        //sycl::buffer<int,1> ret(&N,1);
         q.submit([&](sycl::handler &cgh) {
             DeviceHash dh(hash, cgh, sycl::read_only);
             sycl::nd_range<1> rng(groups*width, width);
-            dh.parallel_for(cgh, rng, ret, //show<int>);
+            dh.parallel_for(cgh, rng, //ret, //show<int>);
                 [](sycl::nd_item<1> it, uint32_t id, const int &x) {
                   if(it.get_local_id(0) != 0) return 0;
                   return 1;
             });
         });
-		q.wait_and_throw();
+		q.wait_and_throw();*/
     }
     printf("%d occupied cells.\n", N);
 
@@ -75,6 +80,10 @@ int main() {
 		std::cout << x << " ";
 	}
 	std::cout << std::endl;
+
+	std::cout << " Compute units: "
+		<< q.get_device().get_info<sycl::info::device::max_compute_units>()
+		<< std::endl;
 
     err += test1(q, 1); // may hang on GPU (compiler bug)
     err += test1(q, 2);

@@ -3,7 +3,7 @@
 
 // Log search/insert/erase actions:
 //#define DEBUG_SYCLHASH
-#include <CL/sycl.hpp>
+#include <sycl/sycl.hpp>
 
 #define SHASH_VERSION_MAJOR @SHASH_VERSION_MAJOR@
 #define SHASH_VERSION_MINOR @SHASH_VERSION_MINOR@
@@ -16,7 +16,6 @@
 #endif
 
 namespace syclhash {
-namespace sycl = cl::sycl;
 
 typedef uint64_t warpMaskT;
 /** Return a bitmask indicating whether each group

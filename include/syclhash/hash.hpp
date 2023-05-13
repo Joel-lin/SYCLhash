@@ -1,6 +1,8 @@
 #pragma once
 
 #include <stdexcept>
+#include <utility>
+#include <type_traits>
 
 #include <syclhash/base.hpp>
 //#include <syclhash/alloc.hpp>
@@ -70,8 +72,6 @@ enum class Step {
     Continue,
     Complete,
 };
-
-struct SingletGroup;
 
 template<typename Group, typename DeviceHashT>
 class PreBucket;
@@ -267,18 +267,18 @@ class Bucket {
      *      (if they are unaware that someone had deleted it).
      */
     template <bool use=true,
-			    std::enable_if_t< use &&
+                std::enable_if_t< use &&
                     DeviceHashT::Mode != sycl::access::mode::read, bool> = true
-			  , typename ...Args>
+              , typename ...Args>
     iterator insert(Args ... args) const {
         Ptr index = dh.insert_cell(group, key, false, args...);
         return iterator(group, &dh, key, index);
     }
 
     template <bool use=true,
-			    std::enable_if_t< use &&
+                std::enable_if_t< use &&
                     DeviceHashT::Mode != sycl::access::mode::read, bool> = true
-			 , typename ...Args>
+             , typename ...Args>
     iterator insert_unique(Args ... args) const {
         Ptr index = dh.insert_cell(group, key, true, args...);
         return iterator(group, &dh, key, index);
@@ -314,7 +314,7 @@ class Bucket {
      *     would leave the value dedicated, but no longer referenced.
      */
     template <bool use=true,
-			    std::enable_if_t< use &&
+                std::enable_if_t< use &&
               DeviceHashT::Mode != sycl::access::mode::read, bool> = true>
     bool erase(iterator position) const {
         return position.erase();
@@ -324,7 +324,7 @@ class Bucket {
 /** A Pre-Bucket just stores the group which will be used
  * to access a particular bucket.
  *
- * @tparam Group type of the group (SingletGroup,
+ * @tparam Group type of the group (Singlet,
  *                                  sycl::group, or sycl::sub_group)
  *
  */
@@ -336,12 +336,14 @@ class PreBucket {
     using DeviceHashT = DeviceHashT_;
     using BucketT = Bucket<Group,DeviceHashT>;
     // TODO ensure only allowed group/device combinations:
-    //   static_assert(std::is_same_t<Group,SingletGroup> ^ (DeviceHashT::accessTarget==HostDevice));
 
     const Group group;
     const DeviceHashT &dh;
     PreBucket(const DeviceHashT &dhash, const Group grp)
-        : dh(dhash), group(grp) {}
+        : dh(dhash), group(grp) {
+        static_assert(std::is_same_v<Group,Singlet> || DeviceHashT::Target == sycl::target::device,
+                      "Groups cannot be used on host.");
+    }
 
     BucketT operator[](Ptr key) const {
         return BucketT(group, dh, key);
@@ -454,6 +456,88 @@ class DeviceHash {
         return mod_w(seed) << search_width;
     }
 
+    class IterContainer;
+
+    // Whole group sees same key,
+    // different groups get different key sequences.
+    class iterator {
+        friend IterContainer;
+        const DeviceHashT *dh;
+        const Ptr end;
+        Ptr step;  // step-by-value
+        Ptr index; // current index
+
+		void seek() {
+            while(index < end) {
+				if( !((dh->keys[index]>>31) & 1) )
+					return;
+                index += step;
+            };
+			index = end;
+		}
+        iterator(const DeviceHashT *dh, Ptr index, Ptr step)
+                : dh(dh), step(step), index(index), end(1<<dh->size_expt) {
+			seek();
+        }
+
+      public:
+
+        using value_type = std::pair<Ptr, T>;
+
+        iterator() : dh(nullptr), step(1), index(1), end(1) {}
+
+        auto operator++() -> iterator& {
+            index += step;
+			seek();
+
+            return *this;
+        }
+
+        auto operator++(int) -> iterator {
+            auto tmp = *this;
+            ++*this;
+            return tmp;
+        }
+
+        auto operator!=(iterator const & other) {
+            return !(*this == other);
+        }
+
+        bool operator==(iterator const & other) {
+            return index == other.index;
+        }
+
+        value_type operator*() {
+            return value_type{dh->keys[index], dh->cell[index]};
+        }
+    };
+
+    class IterContainer {
+        friend DeviceHashT;
+        const DeviceHashT *dh;
+        Ptr step;
+        Ptr index;
+
+        IterContainer(const DeviceHashT *dh, Ptr index, Ptr step)
+                : dh(dh), step(step), index(index) { }
+	  public:
+        iterator begin() {
+            return iterator(dh, index, step);
+        }
+        iterator end() {
+            return iterator(dh, 1<<dh->size_expt, step);
+        }
+    };
+
+    template <typename Group>
+    IterContainer items(Group grp) {
+        return IterContainer(this, grp.get_group_linear_id(),
+                                   grp.get_group_linear_range());
+    }
+    IterContainer items() {
+        return IterContainer(this, 0, 1);
+    }
+
     /** Apply the function to every key,value pair.
      *  Each key is processed by a whole group.
      *
@@ -463,6 +547,10 @@ class DeviceHash {
      *
      *  A generic nd_range<1>(1024, 32) is recommended for looping
      *  over its key-space.
+     *
+     *  Deprecated. Instead, use:
+     *
+     *      for(auto && [key, val] : hash.items(grp)) { ... }
      */
     template <int Dim, typename Fn, typename ...Args>
     void parallel_for(sycl::handler &cgh,
@@ -476,7 +564,7 @@ class DeviceHash {
             for(size_t i = g.get_group_linear_id()
                ;       i < count
                ;       i += g.get_group_linear_range()) {
-                //Ptr key = sycl::group_broadcast(g, keys[i], 0);
+                //Ptr key = grp_broadcast(g, keys[i], 0);
                 Ptr key = keys[i];
                 if((key>>31) & 1) continue;
                 fn(it, key, cell[i], args ...);
@@ -493,7 +581,10 @@ class DeviceHash {
      *
      *  A generic nd_range<1>(1024, 32) is recommended for looping
      *  over its key-space.
-     */
+     *
+     *  Deprecated. Instead, use:
+     *
+     *      for(auto && [key, val] : hash.items(grp)) { ... }
     template <typename R, int Dim, typename Fn, typename ...Args>
     void parallel_for(sycl::handler &cgh,
                       sycl::nd_range<Dim> rng,
@@ -510,7 +601,7 @@ class DeviceHash {
             for(size_t i = g.get_group_linear_id()
                ;       i < count
                ;       i += g.get_group_linear_range()) {
-                //Ptr key = sycl::group_broadcast(g, keys[i], 0);
+                //Ptr key = grp_broadcast(g, keys[i], 0);
                 Ptr key = keys[i];
                 if((key>>31) & 1) continue;
                 R tmp = fn(it, key, cell[i]); //, args ...);
@@ -518,7 +609,13 @@ class DeviceHash {
             }
         });
     }
+     */
 
+    /*
+     *  Deprecated. Instead, use:
+     *
+     *      for(auto && [key, val] : hash.items(grp)) { ... }
+     */
     template <typename U, int Dim, sycl::access::mode Mode2, typename Fn,
               typename ...Args>
     void map(sycl::handler &cgh,
@@ -574,9 +671,9 @@ class DeviceHash {
 
     //template <typename Group, typename ...Args>
     template <typename Group, bool use=true,
-			    std::enable_if_t< use &&
+                std::enable_if_t< use &&
                     Mode != sycl::access::mode::read, bool> = true
-			   , typename ...Args>
+               , typename ...Args>
     Ptr insert_cell(Group g, Ptr key, bool uniq, Args ... args) const {
         Ptr index = mod(key);
         if(! run_op(g, key, index, uniq, [=](Ptr i1, Ptr k1) {
@@ -633,8 +730,8 @@ class DeviceHash {
         // Max number of usable threads in this group.
         const int ngrp = ntid < (1<<search_width)
                        ? ntid : (1<<search_width);
-		// This must be a multiple of ntid so that all threads
-		// will call ballot (preventing deadlock).
+        // This must be a multiple of ntid so that all threads
+        // will call ballot (preventing deadlock).
         const int max_sz = //ntid * ceil( (1<<width)/ntid)
                            ntid*( ((1<<search_width)+ntid-1)/ntid );
         for(int trials = 0
@@ -657,7 +754,7 @@ class DeviceHash {
 
                 for(int winner=0; (mask>>winner) > 0; winner++) {
                     if(((mask>>winner)&1) == 0) continue;
-                    Ptr found = sycl::group_broadcast(g, ahead, winner);
+                    Ptr found = grp_broadcast(g, ahead, winner);
 
                     int idx = i0+i-tid+winner;
                     Step step;
@@ -693,7 +790,7 @@ class DeviceHash {
      * @return true if set is successful, false otherwise
      */
     template <bool use=true, std::enable_if_t< use &&
-			  Mode != sycl::access::mode::read, bool> = true>
+              Mode != sycl::access::mode::read, bool> = true>
     bool set_key(Ptr index, Ptr &was, Ptr key, const T &value) const {
         ADDRESS_CHECK(index, size_expt);
         if(!reserve_key(index, was, key)) return false;
@@ -712,7 +809,7 @@ class DeviceHash {
     }
 
     template <bool use=true, std::enable_if_t< use &&
-			  Mode != sycl::access::mode::read, bool> = true>
+              Mode != sycl::access::mode::read, bool> = true>
     bool set_key(Ptr index, Ptr &was, Ptr key) const {
         ADDRESS_CHECK(index, size_expt);
         if(!reserve_key(index, was, key)) return false;
@@ -740,8 +837,8 @@ class DeviceHash {
 #       endif
         auto v = sycl::atomic_ref<
                             Ptr,
-							//sycl::memory_order::release,
-							sycl::memory_order::acq_rel,
+                            //sycl::memory_order::release,
+                            sycl::memory_order::acq_rel,
                             sycl::memory_scope::device,
                             sycl::access::address_space::global_space>(
                                     keys[index]);
@@ -797,42 +894,42 @@ inline constexpr __unspecified__ write_only_host_task;
 */
 /*
 constexpr sycl::access_mode AccessMode(auto x) {
-	return x == sycl::read_only ?
-		sycl::access_mode::read
-		: (sycl::access_mode::read_write);
+    return x == sycl::read_only ?
+        sycl::access_mode::read
+        : (sycl::access_mode::read_write);
 };*/
 
 /*
 template <typename Descriptor>
 using AccessMode_t = typename
     std::conditional_t<            std::is_same_v<Descriptor, decltype(sycl::read_only)>,
-		decltype(sycl::access_mode::read),
-		std::conditional_t<        std::is_same_v<Descriptor, decltype(sycl::read_write)>,
-		    decltype(sycl::access_mode::read_write),
-			std::conditional_t<    std::is_same_v<Descriptor, decltype(sycl::write_only)>,
-			    decltype(sycl::access_mode::write),
-				void
-			>
-		>
-	>;
+        decltype(sycl::access_mode::read),
+        std::conditional_t<        std::is_same_v<Descriptor, decltype(sycl::read_write)>,
+            decltype(sycl::access_mode::read_write),
+            std::conditional_t<    std::is_same_v<Descriptor, decltype(sycl::write_only)>,
+                decltype(sycl::access_mode::write),
+                void
+            >
+        >
+    >;
 */
 
 /*
 template <typename Descriptor>
 constexpr sycl::access_mode AccessMode_t() {
-	return sycl::access_mode::read;
+    return sycl::access_mode::read;
 }
 template<>
 constexpr sycl::access_mode AccessMode_t<decltype(sycl::read_only)>() {
-	return sycl::access_mode::read;
+    return sycl::access_mode::read;
 }
 template<>
 constexpr sycl::access_mode AccessMode_t<decltype(sycl::read_write)>() {
-	return sycl::access_mode::read_write;
+    return sycl::access_mode::read_write;
 }
 template<>
 constexpr sycl::access_mode AccessMode_t<decltype(sycl::write_only)>() {
-	return sycl::access_mode::write;
+    return sycl::access_mode::write;
 }*/
 
 // Cheat, and retrieve the argument from the underlying Descriptor.
@@ -840,7 +937,7 @@ constexpr sycl::access_mode AccessMode_t<decltype(sycl::write_only)>() {
 //  it will be time for you to leave."
 template <sycl::access_mode mode, template<sycl::access_mode> class ctorType>
 constexpr sycl::access_mode AccessMode_t(ctorType<mode>) {
-	return mode;
+    return mode;
 }
 
 template<typename T, int width, class Descriptor>

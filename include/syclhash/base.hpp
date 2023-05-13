@@ -36,12 +36,33 @@ inline int ctz(const uint64_t x) {
     return ans;
 }
 
+// For doing things on the host.
+struct Singlet {
+	int get_group_linear_id()     { return 0; }
+	int get_group_linear_range()  { return 1; }
+	int get_global_linear_id()    { return 0; }
+	int get_global_linear_range() { return 1; }
+	int get_local_linear_id()     { return 0; }
+	int get_local_linear_range()  { return 1; }
+};
+
+template <typename T>
+T grp_broadcast(Singlet, T x, int) {
+	return x;
+}
+// For some reason, this conflicts with sycl::group_broadcast
+template <typename Group, typename T,
+		 std::enable_if_t<sycl::is_group_v<std::decay_t<Group>>, bool> = true>
+T grp_broadcast(Group g, T x, typename Group::linear_id_type id) {
+	return sycl::group_broadcast(g, x, id);
+}
+
 /// have only the leader call fn(args), all other id-s return same result
 #define apply_leader(ans, g, call) { \
     if(g.get_local_linear_id() == 0) { \
         ans = call; \
     } \
-    ans = sycl::group_broadcast(g, ans, 0); \
+    ans = grp_broadcast(g, ans, 0); \
 }
 
 /* This approach doesn't work.  It confuses the compiler with:
@@ -53,7 +74,7 @@ Ret apply_leader(Group g, F fn, Args... args) {
     if(g.get_local_linear_id() == 0) {
         ans = fn(args...);
     }
-    return sycl::group_broadcast(g, ans, 0);
+    return grp_broadcast(g, ans, 0);
 }*/
 
 /// rotate x left by r bits

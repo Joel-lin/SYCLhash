@@ -102,7 +102,7 @@ class DeviceAlloc {
         if(g.get_local_linear_id() == 0) {
             ok = try_alloc(index);
         }
-        return sycl::group_broadcast(g, ok, 0);
+        return grp_broadcast(g, ok, 0);
     }
 
     /** Try allocating at the given index.
@@ -194,7 +194,7 @@ class DeviceAlloc {
             // return the speculative allocation
             this->free(idx);
         }
-        return sycl::group_broadcast(g, idx, winner);
+        return grp_broadcast(g, idx, winner);
     }
 
     /** Wrap the index into the range of valid keys, [0, 2**size_expt).
