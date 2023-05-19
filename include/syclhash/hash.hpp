@@ -530,11 +530,11 @@ class DeviceHash {
     };
 
     template <typename Group>
-    IterContainer items(Group grp) {
+    IterContainer items(Group grp) const {
         return IterContainer(this, grp.get_group_linear_id(),
                                    grp.get_group_linear_range());
     }
-    IterContainer items() {
+    IterContainer items() const {
         return IterContainer(this, 0, 1);
     }
 
