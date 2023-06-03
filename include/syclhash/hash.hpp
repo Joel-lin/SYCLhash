@@ -945,9 +945,18 @@ DeviceHash(Hash<T,width>&,
            sycl::handler&,
            Descriptor d)
     -> DeviceHash<T, width, AccessMode_t(d), sycl::target::device >;
-    //-> DeviceHash<T, width, Descriptor::mode, Descriptor::target>;
+
+template<typename T, int width, class Descriptor>
+DeviceHash(Hash<T,width>&,
+           sycl::handler&,
+           Descriptor d)
+    -> DeviceHash<T, width, Descriptor::mode, Descriptor::target>;
 
 template<typename T, int width, class Descriptor>
 HostHash(Hash<T,width>&, Descriptor d)
     -> HostHash<T, width, AccessMode_t(d) >;
+
+template<typename T, int width, class Descriptor>
+HostHash(Hash<T,width>&, Descriptor d)
+    -> HostHash<T, width, Descriptor::mode>;
 }
