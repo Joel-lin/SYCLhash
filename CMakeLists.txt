@@ -7,11 +7,14 @@ include(install)
 
 option(BUILD_TESTS "Build the tests accompanying this library." ON)
 option(BUILD_DOCS "Build the documentation accompanying this library." ON)
+option(ENABLE_OPENSYCL "Build with opensycl backend." OFF)
 
 ## Setup SYCL
 ### Due to CMake limitations, hipSYCL requires C++ standard to be set manually
-set(CMAKE_SYCL_FLAGS "${CMAKE_SYCL_FLAGS} -std=c++17")
-#find_package(hipSYCL CONFIG REQUIRED)
+if(ENABLE_OPENSYCL)
+  set(CMAKE_SYCL_FLAGS "${CMAKE_SYCL_FLAGS} -std=c++17")
+  find_package(hipSYCL CONFIG REQUIRED)
+endif()
 
 ##########  TARGETS  ################################################
 add_library(syclhash INTERFACE)
