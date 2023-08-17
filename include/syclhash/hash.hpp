@@ -730,15 +730,12 @@ class DeviceHash {
         // Max number of usable threads in this group.
         const int ngrp = ntid < (1<<search_width)
                        ? ntid : (1<<search_width);
-        // This must be a multiple of ntid so that all threads
-        // will call ballot (preventing deadlock).
-        const int max_sz = //ntid * ceil( (1<<width)/ntid)
-                           ntid*( ((1<<search_width)+ntid-1)/ntid );
         for(int trials = 0
            ; trials < cap
            ; ++trials, i0 = next_hash(i0)) {
-            // read next `2**width` keys
-            for(int i = tid; i < max_sz; i += ngrp) {
+            // as long as there's work for tid=0,
+			// read next `2**width` keys
+            for(int i = tid; i-tid < (1<<search_width); i += ngrp) {
                 bool check = false;
                 Ptr ahead;
                 //if(i0+i < (1<<size_expt))
